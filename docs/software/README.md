@@ -253,3 +253,568 @@ INSERT INTO `project_db`.`tasks` (`Name`, `Developer`, `Status`, `Deadline`, `Pr
 
 - RESTfull сервіс для управління даними
 
+### Вхідний файл програми 
+
+```ts
+using Microsoft.EntityFrameworkCore;
+using DBLab6.MyDBContext;
+using Microsoft.OpenApi.Models;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Andryushka", Version = "v1" });
+});
+
+builder.Services.AddDbContext<ProjectDbContext>();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Andryushka V1");
+});
+
+app.UseHttpsRedirection();
+
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+```
+### CRUD для Users 
+```ts
+using DBLab6.MyDBContext;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Text;
+using System;
+
+namespace DBLab6.Controllers
+{
+    [ApiController]
+    [Route("[controller]")]
+    public class UserController : ControllerBase
+    {
+        private readonly ILogger<UserController> _logger;
+        private readonly ProjectDbContext _context;
+
+        public UserController(ILogger<UserController> logger, ProjectDbContext context)
+        {
+            _logger = logger;
+            _context = context;
+        }
+        [HttpGet]
+        public async Task<IActionResult> Get()
+        {
+            var users = await _context.Users.ToListAsync();
+            return Ok(users);
+        }
+        [HttpPost]
+        public async Task<IActionResult> Post(string Name, string Email, string Password, IFormFile Picture, Role.Names a)
+        {
+            MyDBContext.User entity = new MyDBContext.User();
+            entity.Login = Name;
+            entity.Email = Email;
+            entity.Role = a.ToString();
+
+            int maxId = _context.Users.Max(u => (int?)u.Id) ?? 0;
+            entity.Id = maxId + 1;
+
+            entity.Password = Encoding.UTF8.GetBytes(Password);
+
+            MemoryStream memoryStream = new MemoryStream();
+            Picture.CopyTo(memoryStream);
+            entity.Picture = memoryStream.ToArray();
+
+            await _context.Users.AddAsync(entity);
+            await _context.SaveChangesAsync();
+
+            return Ok();
+        }
+
+        [HttpDelete]
+        public async Task<IActionResult> Delete(int id)
+        {
+            _context.Users.Remove(await _context.Users.FindAsync(id));
+            await _context.SaveChangesAsync();
+            return Ok();
+        }
+        [HttpPatch]
+        public async Task<IActionResult> Update(int id, string Name, string Email, string Password, IFormFile Picture, Role.Names a)
+        {
+             MyDBContext.User entity = await _context.Users.FindAsync(id);
+            entity.Login = Name;
+            entity.Email = Email;
+            entity.Role = a.ToString();
+            entity.Password = Encoding.UTF8.GetBytes(Password);
+
+            MemoryStream memoryStream = new MemoryStream();
+            Picture.CopyTo(memoryStream);
+            entity.Picture = memoryStream.ToArray();
+            _context.Entry(entity).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            return Ok();
+        }
+    }
+}
+```
+### Репозиторій бази даних
+```ts
+using System;
+using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore;
+
+namespace DBLab6.MyDBContext;
+
+public partial class ProjectDbContext : DbContext
+{
+    public ProjectDbContext()
+    {
+    }
+
+    public ProjectDbContext(DbContextOptions<ProjectDbContext> options)
+        : base(options)
+    {
+    }
+
+    public virtual DbSet<Member> Members { get; set; }
+
+    public virtual DbSet<Payment> Payments { get; set; }
+
+    public virtual DbSet<Permission> Permissions { get; set; }
+
+    public virtual DbSet<Project> Projects { get; set; }
+
+    public virtual DbSet<ProjectsMember> ProjectsMembers { get; set; }
+
+    public virtual DbSet<Review> Reviews { get; set; }
+
+    public virtual DbSet<Role> Roles { get; set; }
+
+    public virtual DbSet<RoleGrant> RoleGrants { get; set; }
+
+    public virtual DbSet<Task> Tasks { get; set; }
+
+    public virtual DbSet<User> Users { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see http://go.microsoft.com/fwlink/?LinkId=723263.
+        => optionsBuilder.UseMySql("server=localhost;port=3306;database=project_db;uid=root;password=Admin12345", Microsoft.EntityFrameworkCore.ServerVersion.Parse("8.0.35-mysql"));
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder
+            .UseCollation("utf8mb4_0900_ai_ci")
+            .HasCharSet("utf8mb4");
+
+        modelBuilder.Entity<Member>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("members");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.RoleId, "roleFK_idx");
+
+            entity.HasIndex(e => e.UserId, "userFK_idx");
+
+            entity.HasOne(d => d.Role).WithMany(p => p.Members)
+                .HasForeignKey(d => d.RoleId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("roleFK");
+
+            entity.HasOne(d => d.User).WithMany(p => p.Members)
+                .HasForeignKey(d => d.UserId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("userFK");
+        });
+
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("payments");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.ProjectId, "ProjectId");
+
+            entity.Property(e => e.CardCvv).HasColumnName("CardCVV");
+            entity.Property(e => e.CardExpireDate).HasColumnType("datetime");
+            entity.Property(e => e.Email).HasMaxLength(50);
+
+            entity.HasOne(d => d.Project).WithMany(p => p.Payments)
+                .HasForeignKey(d => d.ProjectId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("payments_ibfk_1");
+        });
+
+        modelBuilder.Entity<Permission>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("permissions");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.Property(e => e.Permission1)
+                .HasMaxLength(50)
+                .HasColumnName("Permission");
+        });
+
+        modelBuilder.Entity<Project>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("projects");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.Property(e => e.Description).HasMaxLength(100);
+            entity.Property(e => e.Name).HasMaxLength(50);
+            entity.Property(e => e.Status).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<ProjectsMember>(entity =>
+        {
+            entity
+                .HasNoKey()
+                .ToTable("projects_members");
+
+            entity.HasIndex(e => e.MemberId, "MemberId");
+
+            entity.HasIndex(e => e.ProjectId, "ProjectId");
+
+            entity.HasOne(d => d.Member).WithMany()
+                .HasForeignKey(d => d.MemberId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("projects_members_ibfk_2");
+
+            entity.HasOne(d => d.Project).WithMany()
+                .HasForeignKey(d => d.ProjectId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("projects_members_ibfk_1");
+        });
+
+        modelBuilder.Entity<Review>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("reviews");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.ProjectId, "ProjectId");
+
+            entity.Property(e => e.Text).HasMaxLength(100);
+
+            entity.HasOne(d => d.Project).WithMany(p => p.Reviews)
+                .HasForeignKey(d => d.ProjectId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("reviews_ibfk_1");
+        });
+
+        modelBuilder.Entity<Role>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("roles");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.Name, "Name").IsUnique();
+
+            entity.Property(e => e.Name).HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<RoleGrant>(entity =>
+        {
+            entity
+                .HasNoKey()
+                .ToTable("role_grant");
+
+            entity.HasIndex(e => e.PermissionId, "PermissionId");
+
+            entity.HasIndex(e => e.RoleId, "RoleId");
+
+            entity.HasOne(d => d.Permission).WithMany()
+                .HasForeignKey(d => d.PermissionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("role_grant_ibfk_2");
+
+            entity.HasOne(d => d.Role).WithMany()
+                .HasForeignKey(d => d.RoleId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("role_grant_ibfk_1");
+        });
+
+        modelBuilder.Entity<Task>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("tasks");
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.ProjectId, "ProjectId");
+
+            entity.Property(e => e.Deadline).HasColumnType("datetime");
+            entity.Property(e => e.Developer).HasMaxLength(45);
+            entity.Property(e => e.Name).HasMaxLength(50);
+            entity.Property(e => e.Status).HasMaxLength(20);
+
+            entity.HasOne(d => d.Project).WithMany(p => p.Tasks)
+                .HasForeignKey(d => d.ProjectId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("tasks_ibfk_1");
+        });
+
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PRIMARY");
+
+            entity.ToTable("users");
+
+            entity.HasIndex(e => e.Email, "Email").IsUnique();
+
+            entity.HasIndex(e => e.Id, "Id").IsUnique();
+
+            entity.HasIndex(e => e.Login, "Login").IsUnique();
+
+            entity.Property(e => e.Email).HasMaxLength(50);
+            entity.Property(e => e.Login).HasMaxLength(45);
+            entity.Property(e => e.Password).HasColumnType("blob");
+            entity.Property(e => e.Picture).HasColumnType("mediumblob");
+            entity.Property(e => e.Role).HasMaxLength(30);
+        });
+
+        OnModelCreatingPartial(modelBuilder);
+    }
+
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
+}
+
+```
+### Сутності
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Member
+{
+    public int Id { get; set; }
+
+    public int RoleId { get; set; }
+
+    public int UserId { get; set; }
+
+    public virtual Role Role { get; set; } = null!;
+
+    public virtual User User { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Payment
+{
+    public int Id { get; set; }
+
+    public int CardNumber { get; set; }
+
+    public int CardCvv { get; set; }
+
+    public DateTime CardExpireDate { get; set; }
+
+    public string Email { get; set; } = null!;
+
+    public int ProjectId { get; set; }
+
+    public virtual Project Project { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Permission
+{
+    public int Id { get; set; }
+
+    public string Permission1 { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Project
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = null!;
+
+    public string Description { get; set; } = null!;
+
+    public string Status { get; set; } = null!;
+
+    public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
+
+    public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();
+
+    public virtual ICollection<Task> Tasks { get; set; } = new List<Task>();
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class ProjectsMember
+{
+    public int MemberId { get; set; }
+
+    public int ProjectId { get; set; }
+
+    public virtual Member Member { get; set; } = null!;
+
+    public virtual Project Project { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Review
+{
+    public int Id { get; set; }
+
+    public string Text { get; set; } = null!;
+
+    public int Rate { get; set; }
+
+    public int ProjectId { get; set; }
+
+    public virtual Project Project { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Role
+{
+    public int Id { get; set; }
+
+    public string? Name { get; set; }
+    public enum Names
+    {
+        Admin,
+        Developer,
+        Teamlead
+    }
+
+    public virtual ICollection<Member> Members { get; set; } = new List<Member>();
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class RoleGrant
+{
+    public int RoleId { get; set; }
+
+    public int PermissionId { get; set; }
+
+    public virtual Permission Permission { get; set; } = null!;
+
+    public virtual Role Role { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class Task
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = null!;
+
+    public string Developer { get; set; } = null!;
+
+    public string Status { get; set; } = null!;
+
+    public DateTime Deadline { get; set; }
+
+    public int ProjectId { get; set; }
+
+    public virtual Project Project { get; set; } = null!;
+}
+
+```
+```ts
+using System;
+using System.Collections.Generic;
+
+namespace DBLab6.MyDBContext;
+
+public partial class User
+{
+    public int Id { get; set; }
+
+    public string Login { get; set; } = null!;
+
+    public byte[] Picture { get; set; } = null!;
+
+    public byte[] Password { get; set; } = null!;
+
+    public string Email { get; set; } = null!;
+
+    public string Role { get; set; } = null!;
+
+    public virtual ICollection<Member> Members { get; set; } = new List<Member>();
+}
+
+```
